@@ -199,11 +199,17 @@ class VolvoCarsDataCoordinator(
         # Note: asyncio.TimeoutError and aiohttp.ClientError are already
         # handled by the data update coordinator.
         async with asyncio.timeout(30):
+            # A single call could fail, but this does not invalidate others
+            # for this situation we need to use return_exceptions=True do dont return on any exception
+            # the exceptions must be checked here
             results = await asyncio.gather(*(call() for call in api_calls), return_exceptions=True)
 
             validCount = 0
             for result in results:
                 if isinstance(result, VolvoAuthException):
+                   # If server refuses autentication then probably all requests will fail
+                   # in this case we can cancel to reauthenticate
+                   #
                    # Raising ConfigEntryAuthFailed will cancel future updates
                    # and start a config flow with SOURCE_REAUTH (async_step_reauth)
                    _LOGGER.exception("Authentication failed")
@@ -215,7 +221,7 @@ class VolvoCarsDataCoordinator(
                     data |= cast(dict[str, VolvoCarsApiBaseModel | None], result)
 
             if validCount == 0:
-                #TODO check if we can result all exceptions
+                #TODO check if we can return all exceptions as cause 
                 if len(results) > 0:
                     raise UpdateFailed("Unable to connect to Volvo API.") from results[0]
                 else:
