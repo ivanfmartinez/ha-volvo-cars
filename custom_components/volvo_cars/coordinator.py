@@ -195,33 +195,41 @@ class VolvoCarsDataCoordinator(
         if self.supports_windows:
             api_calls.append(self.api.async_get_window_states)
 
-        try:
-            # Note: asyncio.TimeoutError and aiohttp.ClientError are already
-            # handled by the data update coordinator.
-            async with asyncio.timeout(30):
-                data: dict[str, VolvoCarsApiBaseModel | None] = {}
-                results = await asyncio.gather(*(call() for call in api_calls))
+        data: dict[str, VolvoCarsApiBaseModel | None] = {}
+        # Note: asyncio.TimeoutError and aiohttp.ClientError are already
+        # handled by the data update coordinator.
+        async with asyncio.timeout(30):
+            results = await asyncio.gather(*(call() for call in api_calls), return_exceptions=True)
 
-                for result in results:
+            validCount = 0
+            for result in results:
+                if isinstance(result, VolvoAuthException):
+                   # Raising ConfigEntryAuthFailed will cancel future updates
+                   # and start a config flow with SOURCE_REAUTH (async_step_reauth)
+                   _LOGGER.exception("Authentication failed")
+                   raise ConfigEntryAuthFailed("Authentication failed.") from ex
+                elif isinstance(result, Exception):
+                   _LOGGER.exception("Error on API call", result)
+                else:
+                    validCount += 1
                     data |= cast(dict[str, VolvoCarsApiBaseModel | None], result)
 
-                data[DATA_BATTERY_CAPACITY] = VolvoCarsValueField.from_dict(
-                    {
-                        "value": self.vehicle.battery_capacity_kwh,
-                        "timestamp": self.config_entry.modified_at,
-                    }
-                )
+            if validCount == 0:
+                #TODO check if we can result all exceptions
+                if len(results) > 0:
+                    raise UpdateFailed("Unable to connect to Volvo API.") from results[0]
+                else:
+                    raise UpdateFailed("Unable to connect to Volvo API. And no results received")
+            
+            data[DATA_BATTERY_CAPACITY] = VolvoCarsValueField.from_dict(
+                {
+                    "value": self.vehicle.battery_capacity_kwh,
+                    "timestamp": self.config_entry.modified_at,
+                }
+            )
+                
 
-        except VolvoAuthException as ex:
-            # Raising ConfigEntryAuthFailed will cancel future updates
-            # and start a config flow with SOURCE_REAUTH (async_step_reauth)
-            _LOGGER.exception("Authentication failed")
-            raise ConfigEntryAuthFailed("Authentication failed.") from ex
-        except (ConnectTimeout, HTTPError) as ex:
-            _LOGGER.exception("Connection failed")
-            raise UpdateFailed("Unable to connect to Volvo API.") from ex
-        else:
-            return data
+        return data
 
     @callback
     async def async_refresh_token(self, _: datetime | None = None) -> None:
