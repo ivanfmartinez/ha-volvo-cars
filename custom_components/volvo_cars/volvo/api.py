@@ -1,9 +1,11 @@
 """Volvo API."""
 
 import logging
+import asyncio
+from asyncio import TimeoutError
 from typing import Any, cast
 
-from aiohttp import ClientResponseError, ClientSession, hdrs
+from aiohttp import ClientResponseError, ClientError, ClientSession, ClientTimeout, hdrs
 
 from .models import (
     VolvoApiException,
@@ -22,6 +24,8 @@ _API_ENERGY_ENDPOINT = "/energy/v1/vehicles"
 _API_LOCATION_ENDPOINT = "/location/v1/vehicles"
 _API_URL = "https://api.volvocars.com"
 _API_STATUS_URL = "https://public-developer-portal-bff.weu-prod.ecpaz.volvocars.biz/api/v1/backend-status"
+# Normally the responses take less than 2-3 seconds
+API_TIMEOUT = 25
 
 _LOGGER = logging.getLogger(__name__)
 _DATA_TO_REDACT = [
@@ -52,7 +56,7 @@ class VolvoCarsApi:
         """Check the API status."""
         try:
             _LOGGER.debug("Request [API status]")
-            async with self._client.get(_API_STATUS_URL) as response:
+            async with self._client.get(_API_STATUS_URL, timeout=ClientTimeout(total=API_TIMEOUT)) as response:
                 _LOGGER.debug("Request [API status] status: %s", response.status)
                 response.raise_for_status()
                 json = await response.json()
@@ -63,6 +67,14 @@ class VolvoCarsApi:
 
         except ClientResponseError as ex:
             _LOGGER.debug("Request [API status] error: %s", ex.message)
+            message = "Unknown"
+
+        except ClientError as ex:
+            _LOGGER.debug("Request [API status] client error: %s", ex)
+            message = "Unknown"
+
+        except TimeoutError as ex:
+            _LOGGER.debug("Request [API status] timeout error: %s", ex)
             message = "Unknown"
 
         return {"apiStatus": VolvoCarsValue(message)}
@@ -206,7 +218,7 @@ class VolvoCarsApi:
                 redact_url(url, self._vin),
             )
             async with self._client.request(
-                method, url, headers=headers, json=body
+                method, url, headers=headers, json=body, timeout=ClientTimeout(total=API_TIMEOUT)
             ) as response:
                 _LOGGER.debug("Request [%s] status: %s", operation, response.status)
                 json = await response.json()
@@ -218,6 +230,7 @@ class VolvoCarsApi:
                 )
                 response.raise_for_status()
                 return data
+
         except ClientResponseError as ex:
             if ex.status == 404:
                 return {}
@@ -236,4 +249,24 @@ class VolvoCarsApi:
                     }
                 }
 
-            raise VolvoApiException from ex
+            _LOGGER.error("Request [%s] unexpected client response %s", operation, ex.message)
+            return {}
+
+# aiohttp.client_exceptions.ClientConnectorError: Cannot connect to host api.volvocars.com:443 ssl:default [None]
+        except ClientError as ex:
+            _LOGGER.error("Request [%s] unexpected client error %s", operation, ex)
+
+            return {}
+
+        except TimeoutError as ex:
+            _LOGGER.debug("Request [%s] timeout error: %s", operation, ex)
+            return {}
+
+# safety to check if there are more exceptions that are not checked before
+# probably this can go out before merging with main version 
+        except Exception as ex:
+            _LOGGER.error("Request [%s] unexpected exception %s", operation, ex)
+
+            return {}
+            
+            
