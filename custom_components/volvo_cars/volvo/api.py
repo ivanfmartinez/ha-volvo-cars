@@ -74,7 +74,7 @@ class VolvoCarsApi:
             message = "Unknown"
 
         except TimeoutError as ex:
-            _LOGGER.debug("Request [API status] timeout error: %s", ex)
+            _LOGGER.debug("Request [API status] timeout error")
             message = "Unknown"
 
         return {"apiStatus": VolvoCarsValue(message)}
@@ -259,7 +259,7 @@ class VolvoCarsApi:
             return {}
 
         except TimeoutError as ex:
-            _LOGGER.debug("Request [%s] timeout error: %s", operation, ex)
+            _LOGGER.debug("Request [%s] timeout error", operation)
             return {}
 
 # safety to check if there are more exceptions that are not checked before
